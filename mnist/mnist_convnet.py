@@ -1,122 +1,109 @@
-import torchvision.datasets
-import torchvision.transforms
 import torch
-import torch.nn
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
+from torchvision import datasets, transforms
+from torch.optim.lr_scheduler import StepLR
 
 from matplotlib import pyplot
 
-class CNN(torch.nn.Module):
 
+
+class CNN(nn.Module):
     def __init__(self):
-        super().__init__()
-        
-        self.conv = torch.nn.Conv2d(in_channels=1, out_channels=10, kernel_size=28, bias=False)
-
+        super(CNN, self).__init__()
+        self.conv1 = nn.Conv2d(in_channels=1, out_channels=10, kernel_size=28, bias=False)
 
     def forward(self, x):
+        x = self.conv1(x)
+        x = torch.flatten(x, 1)
+        output = F.log_softmax(x, dim=1)
+        return output
 
-        x = self.conv(x)
-        x = torch.flatten(x, start_dim=1)
-        x = torch.softmax(x, dim=1)
+def train(model, device, train_loader, optimizer, epoch):
+    model.train()
+    running_loss = 0.
+    for batch_idx, (data, target) in enumerate(train_loader):
+        data, target = data.to(device), target.to(device)
+        optimizer.zero_grad()
+        output = model(data)
+        loss = F.nll_loss(output, target)
+        loss.backward()
+        optimizer.step()
+        if batch_idx % 1000 == 0:
+            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
+                epoch, batch_idx * len(data), len(train_loader.dataset),
+                100. * batch_idx / len(train_loader), loss.item()))
+            
+        running_loss += loss.item()
+    
+    return running_loss
 
-        return x
+
+
+def test(model, device, test_loader):
+    model.eval()
+    test_loss = 0
+    correct = 0
+    with torch.no_grad():
+        for data, target in test_loader:
+            data, target = data.to(device), target.to(device)
+            output = model(data)
+            test_loss += F.nll_loss(output, target, reduction='sum').item()  # sum up batch loss
+            pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
+            correct += pred.eq(target.view_as(pred)).sum().item()
+
+    test_loss /= len(test_loader.dataset)
+
+    print('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
+        test_loss, correct, len(test_loader.dataset),
+        100. * correct / len(test_loader.dataset)))
+    
+    return correct / len(test_loader.dataset)
 
 
 if __name__ == '__main__':
-    mnist = torchvision.datasets.MNIST(root='./mnist/', download=True, train=True, transform=torchvision.transforms.ToTensor())
 
-    mnist_image = list()
-    mnist_target = list()
+    device = torch.device("mps")
 
-    for image, target in mnist:
+    transform=transforms.Compose([
+        transforms.ToTensor()
+        ])
+    dataset1 = datasets.MNIST('./MNIST', train=True, download=True,
+                       transform=transform)
+    dataset2 = datasets.MNIST('./MNIST', train=False,
+                       transform=transform)
+    train_loader = torch.utils.data.DataLoader(dataset1, batch_size=64)
+    test_loader = torch.utils.data.DataLoader(dataset2, batch_size=64)
 
-        mnist_image.append(image[None, :, :, :])
-        mnist_target.append(torch.tensor([[1. if x == target else 0. for x in range(10)]]))
+    model = CNN().to(device)
+    optimizer = optim.Adadelta(model.parameters(), lr=1.0)
 
-    mnist_image = torch.cat(mnist_image)
-    mnist_target = torch.cat(mnist_target)
-
-    split_n = int(len(mnist_image)*0.8)
-
-    train_image = mnist_image[:split_n]
-    test_image = mnist_image[split_n:]
-    train_target = mnist_target[:split_n]
-    test_target = mnist_target[split_n:]
-    
-
-    cnn = CNN()
-    cnn.eval()
-
-    y = cnn(train_image)
-    print(y[:3])
-    print(train_target[:3])
-
-    cross_entropy = torch.nn.CrossEntropyLoss()
-    optim = torch.optim.Adam(cnn.parameters(), lr=1e-2)
-
-
-    cnn.train()
-    cnn.to('mps')
-    train_image = train_image.to('mps')
-    train_target = train_target.to('mps')
-    test_image = train_image.to('mps')
-    test_target = train_target.to('mps')
-    
     loss_list = list()
-    acc_list = list()
-    acc_list_test = list()
+    accuracy_list = list()
 
-    for epoch in range(50):
+    scheduler = StepLR(optimizer, step_size=1, gamma=0.7)
+    for epoch in range(1, 15 + 1):
+        loss = train(model, device, train_loader, optimizer, epoch)
+        loss_list.append(loss)
+        accuracy = test(model, device, test_loader)
+        accuracy_list.append(accuracy)
+        scheduler.step()
 
-        running_loss = 0.
+    state_dict = model.state_dict()
 
-        optim.zero_grad()
-
-        cnn.train()
-        probs = cnn(train_image)
-        loss = cross_entropy(probs, train_target)
-        loss.backward()
-        optim.step()
-
-        running_loss += loss.item()
-        loss_list.append(running_loss)
-
-        _, y_pred = torch.max(probs.data, 1)
-        _, target = torch.max(train_target.data , 1)
-
-        acc = (y_pred == target).sum().item() / len(y_pred)
-
-        acc_list.append(acc)
-
-        cnn.eval()
-        probs = cnn(test_image)
-        _, y_pred = torch.max(probs.data, 1)
-        _, target = torch.max(test_target.data , 1)
-
-        acc_test = (y_pred == target).sum().item() / len(y_pred)
-        acc_list_test.append(acc_test)
-
-
-        print(f'Epoch {epoch} - loss {running_loss} - accuracy {acc} - accuracy test {acc_test}')
-
-    state_dict = cnn.state_dict()
-
-    print(state_dict['conv.weight'].shape)
+    pyplot.clf()
+    pyplot.subplots(1, 10)
+    for i in range(10):
+        pyplot.subplot(1, 10, i + 1)
+        pyplot.imshow(state_dict['conv1.weight'][i, 0].cpu().detach().numpy())
+    pyplot.show()
 
     pyplot.clf()
     pyplot.plot(loss_list)
     pyplot.show()
 
     pyplot.clf()
-    pyplot.plot(acc_list, label='TRAIN')
-    pyplot.plot(acc_list_test, label='TEST')
+    pyplot.plot(accuracy_list, label='TEST')
     pyplot.legend()
-    pyplot.show()
-
-
-    pyplot.clf()
-    pyplot.subplots(1, 10)
-    for i in range(10):
-        pyplot.subplot(1, 10, i + 1)
-        pyplot.imshow(state_dict['conv.weight'][i, 0].cpu().detach().numpy())
     pyplot.show()
