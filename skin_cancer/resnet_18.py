@@ -12,13 +12,13 @@ if __name__ == '__main__':
         transforms.RandomResizedCrop(224),
         transforms.RandomHorizontalFlip(), # data augmentation
         transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]) # normalization
+        #transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]) # normalization
     ])
     transforms_test = transforms.Compose([
         transforms.Resize((224, 224)),   #must same as here
         transforms.CenterCrop((224, 224)),
         transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        #transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     ])
 
 
@@ -37,7 +37,8 @@ if __name__ == '__main__':
     model.fc = torch.nn.Linear(512, 2)
     model = model.to('mps')
     criterion = torch.nn.CrossEntropyLoss()
-    optimizer = torch.optim.SGD(model.parameters(), lr=0.0001, momentum=0.9)
+    optimizer = torch.optim.Adadelta(model.fc.parameters(), lr=1.0)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer=optimizer, step_size=2, gamma=0.5)
 
 
     train_loss=[]
@@ -45,7 +46,7 @@ if __name__ == '__main__':
     test_loss=[]
     test_accuary=[]
 
-    num_epochs = 10
+    num_epochs = 20
     start_time = time.time() 
 
     for epoch in range(num_epochs): 
@@ -96,6 +97,7 @@ if __name__ == '__main__':
             test_accuary.append(epoch_acc)
 
             print('[Test #{}] Loss: {:.4f} Acc: {:.4f}% Time: {:.4f}s'.format(epoch+1, epoch_loss, epoch_acc, time.time()- start_time))
+        scheduler.step()
 
     pyplot.figure(figsize=(6,6))
     pyplot.plot(numpy.arange(1,num_epochs+1), train_accuary,'-o')

@@ -5,6 +5,7 @@ import PIL
 import os
 
 from matplotlib import pyplot
+from torch.optim.lr_scheduler import StepLR
 
 class DoubleConv(torch.nn.Module):
     """(convolution => [BN] => ReLU) * 2"""
@@ -168,22 +169,26 @@ if __name__ == '__main__':
     masks_tensor = torch.cat(masks_tensor)
     print(masks_tensor.shape)
 
-    unet = UNet(n_channels=3, n_classes=2)
+    unet = UNet(n_channels=3, n_classes=2).to('mps')
 
-    dataloader_train_image = torch.utils.data.DataLoader(image_tensor, batch_size=64)
-    dataloader_train_target = torch.utils.data.DataLoader(masks_tensor, batch_size=64)
 
-    optim = torch.optim.Adam(unet.parameters(), lr=1e-3)
+    dataloader_train_image = torch.utils.data.DataLoader(image_tensor, batch_size=16)
+    dataloader_train_target = torch.utils.data.DataLoader(masks_tensor, batch_size=16)
+
+    optim = torch.optim.Adam(unet.parameters(), lr=0.01)
+    scheduler = StepLR(optimizer=optim, step_size=1, gamma=0.5)
     cross_entropy = torch.nn.CrossEntropyLoss()
 
     loss_list = list()
     jaccard_list = list()
-    for epoch in range(10):
+    for epoch in range(20):
         running_loss = 0.
         unet.train()
 
         jaccard_epoch = list()
         for image, target in zip(dataloader_train_image, dataloader_train_target):
+            image = image.to('mps')
+            target = target.to('mps')
 
             pred = unet(image)
 
@@ -193,6 +198,8 @@ if __name__ == '__main__':
             loss.backward()
             optim.step()
         for image, target in zip(dataloader_train_image, dataloader_train_target):
+            image = image.to('mps')
+            target = target.to('mps')
 
             pred = unet(image)
 
@@ -201,12 +208,13 @@ if __name__ == '__main__':
 
             intersection = torch.sum(pred_unflatten == target_unflatten, dim=(1, 2))/10000.
 
-            jaccard_epoch.append(torch.mean(intersection).detach())
+            jaccard_epoch.append(torch.mean(intersection).detach().to('cpu'))
 
 
         jaccard_list.append(sum(jaccard_epoch)/len(jaccard_epoch))
         loss_list.append(running_loss)
 
+        scheduler.step()
         print(f'Epoch {epoch} - Loss {running_loss} - jaccard {sum(jaccard_epoch)/len(jaccard_epoch)}')
 
     pyplot.plot(jaccard_list)
@@ -216,16 +224,16 @@ if __name__ == '__main__':
     pyplot.show()
 
     pyplot.clf()
-    pyplot.imshow(pred_unflatten[2].detach().numpy())
+    pyplot.imshow(pred_unflatten[2].to('cpu').detach().numpy())
     pyplot.show()
     pyplot.clf()
-    pyplot.imshow(torch.permute(image[2], (1, 2, 0)))
+    pyplot.imshow(torch.permute(image[2].to('cpu'), (1, 2, 0)))
     pyplot.show()
     pyplot.clf()
-    pyplot.imshow(target[2][0].detach().numpy())
+    pyplot.imshow(target[2][0].to('cpu').detach().numpy())
     pyplot.show()
 
     pyplot.clf()
-    pyplot.imshow(torch.permute(image[2], (1, 2, 0)))
-    pyplot.imshow(pred_unflatten[2].detach().numpy(), alpha=0.3)
+    pyplot.imshow(torch.permute(image[2].to('cpu'), (1, 2, 0)))
+    pyplot.imshow(pred_unflatten[2].to('cpu').detach().numpy(), alpha=0.3)
     pyplot.show()
